@@ -16,7 +16,7 @@ typedef short bool;
 #define false 0
 
 #define SHKEY 300
-
+#define MSGKEY 200 
 
 ///==============================
 //don't mess with this variable//
