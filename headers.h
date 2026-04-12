@@ -10,12 +10,31 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <limits.h>
 
 typedef short bool;
 #define true 1
 #define false 0
 
 #define SHKEY 300
+
+/* ======== Message queue key (generator <-> scheduler) ============= */         
+#define MSGQ_KEY 500
+
+/* ==================== Algorithm IDs ================================= */
+#define ALGO_HPF  1
+#define ALGO_RR   2
+#define ALGO_FCFS_2CPUS 3   
+
+/* =========================================== */
+typedef struct {
+    long mtype;    
+    int  id;
+    int  arrival;
+    int  runtime;
+    int  priority;
+} ProcessMsg;
+
 
 
 ///==============================
