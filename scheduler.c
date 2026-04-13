@@ -1,5 +1,6 @@
 #include "headers.h"
 #include "DataStructures.h"
+void HPF (int msg_id,int total_processes);
 
 /*==================== PCB Table ============================= */
 PCB pcbTable[1000]; // assuming maximum 100 processes
@@ -362,7 +363,7 @@ int main(int argc, char * argv[])
             //schedule_RR(msqid, quantum);
             break;
         case ALGO_HPF:  
-            //schedule_HPF(msqid);
+            HPF(msqid, TotalProcesses);
             break;
         case ALGO_FCFS_2CPUS: 
             schedule_FCFS_2CPUs(msqid, TotalProcesses, N, M);

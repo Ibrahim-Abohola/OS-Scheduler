@@ -1,11 +1,11 @@
 #include "PrioQueue.h"
 
 void HPF (int msg_id,int total_processes) {   
-    prioQueue* pq=initPrioQueue(100);
+    prioQueue* pq=create_pq(100);
     PCB running_process;
     int finished_processes=0;
     bool isRunning=false;
-    FILE* log_file=fopen("scheduler.log","w");
+    FILE* log_file=fopen("HPFscheduler.log","w");
     
     float total_wta = 0;
     float total_waiting = 0;
@@ -40,10 +40,14 @@ void HPF (int msg_id,int total_processes) {
             last_time=current_time;
         }
 
-        struct msg message;
+        ProcessMsg message;
         while(msgrcv(msg_id,&message,sizeof(message),0,IPC_NOWAIT)!=-1){
-            PCB new_process=message.process;
-            new_process.remainingTime=new_process.runTime;
+            PCB new_process;
+            new_process.remainingTime=message.runtime;
+            new_process.arrivalTime=message.arrival;
+            new_process.runTime=message.runtime;
+            new_process.priority=message.priority;
+            new_process.id=message.id;
             new_process.state='W';
             if(isRunning&&new_process.priority<running_process.priority){
                 kill(running_process.pid,SIGSTOP);
@@ -66,12 +70,13 @@ void HPF (int msg_id,int total_processes) {
                 if(processID==0){
                     char remainingTimeStr[10];
                     sprintf(remainingTimeStr, "%d", running_process.remainingTime);
-                    execl("process.out", "process.out", remainingTimeStr, NULL);
+                    execl("./process.out", "process.out", remainingTimeStr, NULL);
                 }
                 else{
                     running_process.startTime=current_time;
                     running_process.pid=processID;
                     running_process.state='R';
+                    running_process.waitingTime+=current_time-running_process.arrivalTime;
                     fprintf(log_file, "At time %d process %d started arr %d total %d remain %d wait %d\n",
                             current_time, running_process.id, running_process.arrivalTime, running_process.runTime
                             ,running_process.remainingTime, running_process.waitingTime);
@@ -89,7 +94,7 @@ void HPF (int msg_id,int total_processes) {
             }
         }
     }
-    FILE* perf_file = fopen("scheduler.perf", "w");
+    FILE* perf_file = fopen("HPFscheduler.perf", "w");
     float avg_wta = total_wta / total_processes;
     float avg_wait = total_waiting / total_processes;
     float std_dev = sqrt((total_wta_square / total_processes) - (avg_wta * avg_wta));

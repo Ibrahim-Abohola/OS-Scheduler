@@ -8,7 +8,7 @@ typedef struct prioQueue{
     int capacity;
 }prioQueue;
 
-prioQueue* initPrioQueue(int capacity);
+prioQueue* create_pq(int capacity);
 void insert(prioQueue* pq, PCB item);
 PCB extractMax(prioQueue* pq);
 int peekPrio(prioQueue*pq);
