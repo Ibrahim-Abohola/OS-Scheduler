@@ -34,6 +34,7 @@ void HPF (int msg_id,int total_processes) {
                             current_time, running_process.id, running_process.arrivalTime, 
                             running_process.runTime, running_process.waitingTime, ta, wta);
                     isRunning = false;
+                    context_switching++;
                     finished_processes++;
                 }
             }
