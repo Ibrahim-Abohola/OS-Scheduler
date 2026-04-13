@@ -1,3 +1,6 @@
+#ifndef HEADERS_H
+#define HEADERS_H
+
 #include <stdio.h>      //if you don't use scanf/printf change this include
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -11,6 +14,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <limits.h>
+#include <string.h>
+#include <math.h>
 
 typedef short bool;
 #define true 1
@@ -19,7 +24,7 @@ typedef short bool;
 #define SHKEY 300
 
 /* ======== Message queue key (generator <-> scheduler) ============= */         
-#define MSGQ_KEY 500
+#define MSGKEY 200 
 
 /* ==================== Algorithm IDs ================================= */
 #define ALGO_HPF  1
@@ -39,34 +44,17 @@ typedef struct {
 
 ///==============================
 //don't mess with this variable//
-int * shmaddr;                 //
+extern int * shmaddr;                 //
 //===============================
 
 
-
-int getClk()
-{
-    return *shmaddr;
-}
-
+int getClk();
 
 /*
  * All process call this function at the beginning to establish communication between them and the clock module.
  * Again, remember that the clock is only emulation!
 */
-void initClk()
-{
-    int shmid = shmget(SHKEY, 4, 0444);
-    while ((int)shmid == -1)
-    {
-        //Make sure that the clock exists
-        printf("Wait! The clock not initialized yet!\n");
-        sleep(1);
-        shmid = shmget(SHKEY, 4, 0444);
-    }
-    shmaddr = (int *) shmat(shmid, (void *)0, 0);
-}
-
+void initClk();
 
 /*
  * All process call this function at the end to release the communication
@@ -76,11 +64,6 @@ void initClk()
  *                      It terminates the whole system and releases resources.
 */
 
-void destroyClk(bool terminateAll)
-{
-    shmdt(shmaddr);
-    if (terminateAll)
-    {
-        killpg(getpgrp(), SIGINT);
-    }
-}
+void destroyClk(bool terminateAll);
+
+#endif

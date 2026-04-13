@@ -28,7 +28,7 @@ FILE * scheduler2_log = NULL;
 
 void log_scheduler_event(FILE * log_file, int time, PCB * pcb, const char * event) {
    if (log_file == NULL) {
-        log_file = fopen("scheduler.log", "a");
+        log_file = fopen("scheduler.log", "w");
     }
      fprintf(log_file, "At time %d process %d %s arr %d total %d remain %d wait %d",
             time, pcb->id, event, pcb->arrivalTime, pcb->runTime, pcb->remainingTime, pcb->waitingTime);
@@ -42,8 +42,7 @@ void log_scheduler_event(FILE * log_file, int time, PCB * pcb, const char * even
 }
 /*=========================================================================*/
 
-void start_process(FILE * log_file, PCB * pcb) {
-    int currentTime = getClk();
+void start_process(FILE * log_file, PCB * pcb, int currentTime) {
     
     pid_t pid = fork();
     if (pid == -1)
@@ -53,9 +52,9 @@ void start_process(FILE * log_file, PCB * pcb) {
     }
     else if (pid == 0)
     {
-        char runTimeStr[10];
-        sprintf(runTimeStr, "%d", pcb->runTime);
-        execl("./process.out", "process.out", runTimeStr, NULL);
+        char remainingTimeStr[10];
+        sprintf(remainingTimeStr, "%d", pcb->remainingTime);
+        execl("./process.out", "process.out", remainingTimeStr, NULL);
         perror("execl failed");
         exit(1);
     }
@@ -78,6 +77,28 @@ int receive_process_FCFS(int msqid,Queue * readyQueue,int cpu_id)
         PCB * pcb = new_process(msg.id, msg.arrival, msg.runtime, msg.priority);
         pcb->cpuid = cpu_id;
         enqueue(readyQueue, pcb);
+        printf("Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", cpu_id, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
+        received++;
+    }
+    return received;
+}
+int receive_process_FCFS2CPUs(int msqid,Queue * q1,Queue * q2)
+{
+    ProcessMsg msg;
+    int received = 0;
+    while(msgrcv(msqid, &msg, sizeof(ProcessMsg) - sizeof(long), 0, IPC_NOWAIT) != -1) {
+        PCB * pcb = new_process(msg.id, msg.arrival, msg.runtime, msg.priority);
+        if(q1->size <= q2->size)
+        { 
+            pcb->cpuid = 1;
+            enqueue(q1, pcb);
+        } 
+        else
+        {
+            pcb->cpuid = 2;
+            enqueue(q2, pcb);
+        }
+        printf("Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", pcb->cpuid, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
         received++;
     }
     return received;
@@ -123,9 +144,9 @@ void calculate_performance(FILE * perfFile,int cpuid) {
         }
     }
     double stddev_WTA = sqrt(sum_squared_diff / n);
-    fprintf(perfFile, " CPU utilization = %.2f%%\n", cpu_utilization);
-    fprintf(perfFile, " Avg WTA = %.2f\n",           avg_WTA);
-    fprintf(perfFile, " Avg Waiting = %.2f\n",        avg_waiting);
+    fprintf(perfFile, "CPU utilization = %.2f%%\n", cpu_utilization);
+    fprintf(perfFile, "Avg WTA = %.2f\n",           avg_WTA);
+    fprintf(perfFile, "Avg Waiting = %.2f\n",        avg_waiting);
     fprintf(perfFile, "Std WTA = %.2f\n",             stddev_WTA);
     fflush(perfFile);
 
@@ -138,24 +159,25 @@ void schedule_FCFS(int msqid,int TotalProcesses) {
     int done_count = 0; // count how many processes have finished
     int last_time = -1; // to track clock cycles
     int n = pcbTableSize; // total number of processes
-    scheduler_log = fopen("scheduler.log", "a");
+    scheduler_log = fopen("scheduler.log", "w");
     while (done_count < TotalProcesses || currentProcess != NULL || readyQueue.size > 0) {
          int currentTime = getClk();
         if(currentTime == last_time)    
         {
-            usleep(500000);
+            usleep(50000);
             continue; // only check for stealing every clock tick
         }
         last_time = currentTime;
+        if(currentProcess) currentProcess->remainingTime--;
         receive_process_FCFS(msqid, &readyQueue, 1);
         if (currentProcess == NULL && readyQueue.size > 0) {
             currentProcess = dequeue(&readyQueue);
-            start_process(scheduler_log, currentProcess);
+            start_process(scheduler_log, currentProcess, currentTime);
         }
         if(currentProcess) {
             pid_t finished_pid = waitpid(-1, NULL, WNOHANG);
             if(finished_pid > 0 && finished_pid == currentProcess->pid) {
-                currentProcess->finishTime = getClk();
+                currentProcess->finishTime = currentTime;
                 currentProcess->state = 'F'; // Finished state
                 currentProcess->remainingTime = 0;
                 log_scheduler_event(scheduler_log, currentProcess->finishTime, currentProcess, "finished");
@@ -166,10 +188,10 @@ void schedule_FCFS(int msqid,int TotalProcesses) {
         if(!currentProcess && readyQueue.size > 0)
         {
             currentProcess = dequeue(&readyQueue);
-            start_process(scheduler_log, currentProcess);
+            start_process(scheduler_log, currentProcess, currentTime);
         }
     }
-    FILE * scheduler_perf = fopen("scheduler.perf", "a");
+    FILE * scheduler_perf = fopen("scheduler.perf", "w");
     calculate_performance(scheduler_perf, 1);
     fclose(scheduler_log);
     fclose(scheduler_perf);
@@ -177,8 +199,11 @@ void schedule_FCFS(int msqid,int TotalProcesses) {
 /*=================================== FCFS 2 CPUs ===============================================================*/
 void schedule_FCFS_2CPUs(int msqid,int TotalProcesses, int N, int M)
 {
+    printf("Starting FCFS with 2 CPUs, N=%d, M=%d\n", N, M);
     Queue q1; initQueue(&q1);
+    printf("Initialized Queue 1\n");
     Queue q2; initQueue(&q2);
+    printf("Initialized Queue 2\n");
     PCB * currentProcess1 = NULL;
     PCB * currentProcess2 = NULL;
     int done_count = 0; // count how many processes have finished
@@ -186,79 +211,69 @@ void schedule_FCFS_2CPUs(int msqid,int TotalProcesses, int N, int M)
     int overhead2 = 0; // stealing overhead for CPU 2
     int steal_timer = 0; // counts up to N to steal then acc to diff threshold M
     int last_time= -1; // tick every clock tick to check for stealing
-    scheduler1_log = fopen("scheduler1.log", "a");
-    scheduler2_log = fopen("scheduler2.log", "a");
+    scheduler1_log = fopen("scheduler1.log", "w");
+    scheduler2_log = fopen("scheduler2.log", "w");
     while (done_count < TotalProcesses || currentProcess1 != NULL || currentProcess2 != NULL || q1.size > 0 || q2.size > 0) {
         int currentTime = getClk();
         if(currentTime == last_time) 
         {
-            usleep(500000);
-            continue; // only check for stealing every clock tick
+            usleep(50000);
+            continue; 
         }
         last_time = currentTime;
-        steal_timer++;
         bool cpu1_stalled = overhead1 > 0;
         bool cpu2_stalled = overhead2 > 0;
+        if(currentProcess1 && !cpu1_stalled) currentProcess1->remainingTime--;
+        if(currentProcess2 && !cpu2_stalled) currentProcess2->remainingTime--;
+        steal_timer++;
         if(overhead1 > 0) overhead1--;
         if(overhead2 > 0) overhead2--;
 
-        if(q1.size <= q2.size) 
-            receive_process_FCFS(msqid, &q1, 1);
-        else
-            receive_process_FCFS(msqid, &q2, 2);
-        
+        receive_process_FCFS2CPUs(msqid, &q1, &q2);
+
+        if(overhead1 == 0 && cpu1_stalled && currentProcess1) {
+            kill(currentProcess1->pid, SIGCONT);
+        }
+        if(overhead2 == 0 && cpu2_stalled && currentProcess2) {
+            kill(currentProcess2->pid, SIGCONT);
+        }
      
         if (!cpu1_stalled && currentProcess1 == NULL && q1.size > 0) {
             currentProcess1 = dequeue(&q1);
-            start_process(scheduler1_log, currentProcess1);
+            start_process(scheduler1_log, currentProcess1,currentTime);
         }
         if (!cpu2_stalled && currentProcess2 == NULL && q2.size > 0) {
             currentProcess2 = dequeue(&q2);
-            start_process(scheduler2_log, currentProcess2);
+            start_process(scheduler2_log, currentProcess2,currentTime);
         }
-        pid_t finished_pid = waitpid(-1, NULL, WNOHANG);
-        if(currentProcess1 || currentProcess2)
+        pid_t finished_pid;
+        while((finished_pid = waitpid(-1, NULL, WNOHANG)) > 0)
         {
-            pid_t finished_pid = waitpid(-1, NULL, WNOHANG);
-            // if a process finishes on CPU 1
-            if(finished_pid > 0 && finished_pid == currentProcess1->pid) {
-                currentProcess1->finishTime = getClk();
-                currentProcess1->state = 'F'; // Finished state
+            if(currentProcess1 && finished_pid == currentProcess1->pid) {
+                currentProcess1->finishTime = currentTime;
                 currentProcess1->remainingTime = 0;
-                log_scheduler_event(scheduler1_log, currentProcess1->finishTime, currentProcess1, "finished");
+                currentProcess1->state = 'F';
+                log_scheduler_event(scheduler1_log, currentTime, currentProcess1, "finished");
                 done_count++;
-                currentProcess1 = NULL; 
+                currentProcess1 = NULL;
             }
-            // if a process finishes on CPU 2
-            if(finished_pid > 0 && finished_pid == currentProcess2->pid) {
-                currentProcess2->finishTime = getClk();
-                currentProcess2->state = 'F'; // Finished state
+            if(currentProcess2 && finished_pid == currentProcess2->pid) {
+                currentProcess2->finishTime = currentTime;
                 currentProcess2->remainingTime = 0;
-                log_scheduler_event(scheduler2_log, currentProcess2->finishTime, currentProcess2, "finished");
+                currentProcess2->state = 'F';
+                log_scheduler_event(scheduler2_log, currentTime, currentProcess2, "finished");
                 done_count++;
                 currentProcess2 = NULL;
             }
-
-        }        
-     
-        if(!cpu1_stalled && !currentProcess1 && q1.size > 0)
-        {
-            currentProcess1 = dequeue(&q1);
-            start_process(scheduler1_log, currentProcess1);
-        }
-        if(!cpu2_stalled && !currentProcess2 && q2.size > 0)  
-        {
-            currentProcess2 = dequeue(&q2);
-            start_process(scheduler2_log, currentProcess2);
-        }
+        }       
         // steal logic: every N time units, check the difference in queue remaining time and steal if the difference is greater than M
-        if(steal_timer == N)
+        if(currentTime % N == 0 && currentTime != 0)
         {
             steal_timer = 0;
             int q1_remaining_time = totalRemainingTime(&q1) + (currentProcess1 ? currentProcess1->remainingTime : 0);
             int q2_remaining_time = totalRemainingTime(&q2) + (currentProcess2 ? currentProcess2->remainingTime : 0);
             int steals = 0;
-            int steal_start_time = getClk();   // snapshot time at start of steal check
+            int steal_start_time = currentTime;   // snapshot time at start of steal check
             while(abs(q1_remaining_time - q2_remaining_time) > M)
             {
                 int steal_time = steal_start_time + steals * 3; // each steal adds 3s overhead, so next steal can only happen after that
@@ -288,12 +303,20 @@ void schedule_FCFS_2CPUs(int msqid,int TotalProcesses, int N, int M)
                 // Stealing overhead of 3s for both CPUs
                 overhead1 = steals * 3;
                 overhead2 = steals * 3;
+                if(currentProcess1) {
+                    currentProcess1->waitingTime += 3 * steals; // add the overhead to waiting time
+                    kill(currentProcess1->pid, SIGSTOP);  // freeze it
+                }
+                if(currentProcess2) {
+                    currentProcess2->waitingTime += 3 * steals; // add the overhead to waiting time
+                    kill(currentProcess2->pid, SIGSTOP);  // freeze it
+                }
             }
         }
-            
+      
     }
-    FILE * scheduler1_perf = fopen("scheduler1.perf", "a");
-    FILE * scheduler2_perf = fopen("scheduler2.perf", "a");
+    FILE * scheduler1_perf = fopen("scheduler1.perf", "w");
+    FILE * scheduler2_perf = fopen("scheduler2.perf", "w");
     calculate_performance(scheduler1_perf, 1);
     calculate_performance(scheduler2_perf, 2);
     fclose(scheduler1_log);
@@ -328,7 +351,7 @@ int main(int argc, char * argv[])
     int N = argc > 3 ? atoi(argv[3]) : 0;
     int M = argc > 4 ? atoi(argv[4]) : 0;
 
-    key_t key = ftok("keyfile", MSGQ_KEY);
+    key_t key = ftok("keyfile", MSGKEY);
     int msqid = msgget(key, 0666 | IPC_CREAT);
     if(msqid == -1) {
         perror("msgget failed");
