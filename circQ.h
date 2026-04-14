@@ -1,6 +1,6 @@
 #ifndef CIRCQ_H
 #define CIRCQ_H
-#include "DataStructures.c"
+#include "DataStructures.h"
 
 typedef struct circQ {
     PCB *buffer;
@@ -11,8 +11,8 @@ typedef struct circQ {
 } CircQ;
 
 CircQ *initCircQ (int capacity);
-void   enqueue   (CircQ *q, PCB item);
-PCB    dequeue   (CircQ *q);
+void   enqueueCircQ   (CircQ *q, PCB item);
+PCB    dequeueCircQ   (CircQ *q);
 PCB    peekFront (CircQ *q);
 int    isEmpty   (CircQ *q);
 int    isFull    (CircQ *q);

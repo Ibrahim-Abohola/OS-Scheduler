@@ -1,6 +1,7 @@
 #include "headers.h"
 #include "DataStructures.h"
 void HPF (int msg_id,int total_processes);
+void RR (int msg_id, int total_processes, int quantum);
 
 /*==================== PCB Table ============================= */
 PCB pcbTable[1000]; // assuming maximum 100 processes
@@ -360,7 +361,7 @@ int main(int argc, char * argv[])
     }
     switch(algo) {
         case ALGO_RR:
-            //schedule_RR(msqid, quantum);
+            RR(msqid, TotalProcesses, quantum);
             break;
         case ALGO_HPF:  
             HPF(msqid, TotalProcesses);

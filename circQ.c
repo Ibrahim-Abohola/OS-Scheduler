@@ -18,7 +18,7 @@ int isFull(CircQ *q) {
     return q->size == q->capacity;
 }
 
-void enqueue(CircQ *q, PCB item) {
+void enqueueCircQ(CircQ *q, PCB item) {
     if (isFull(q)) {
         printf("Circular Queue is full!\n");
         return;
@@ -28,7 +28,7 @@ void enqueue(CircQ *q, PCB item) {
     q->size++;
 }
 
-PCB dequeue(CircQ *q) {
+PCB dequeueCircQ(CircQ *q) {
     if (isEmpty(q)) {
         PCB empty = {0};
         return empty;

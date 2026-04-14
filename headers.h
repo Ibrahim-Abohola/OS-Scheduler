@@ -17,9 +17,13 @@
 #include <string.h>
 #include <math.h>
 
+#ifdef __STDC_VERSION__
+#include <stdbool.h>
+#else
 typedef short bool;
 #define true 1
 #define false 0
+#endif
 
 #define SHKEY 300
 

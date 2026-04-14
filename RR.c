@@ -1,5 +1,5 @@
-#include "circQ.h"   /* was "CircQ.h" — Linux FS is case-sensitive */
-#include <math.h>   /* needed for sqrt() */
+#include "circQ.h" 
+#include <math.h> 
 
 void RR(int msg_id, int total_processes, int quantum) {
     initClk();  /* initialize this TU's static shmaddr */
@@ -50,6 +50,11 @@ void RR(int msg_id, int total_processes, int quantum) {
 
                     isRunning = false;
                     finished_processes++;
+                    
+                    /* Add context switching overhead if there are more processes waiting (Q.28, Q.30) */
+                    if (q->size > 0) {
+                        context_switch = 1;
+                    }
 
                 } else if (quantum_remain == 0) {
                     /* Quantum expired — preempt, re-enqueue, pay context-switch cost */
@@ -63,29 +68,38 @@ void RR(int msg_id, int total_processes, int quantum) {
                             running_process.arrivalTime, running_process.runTime,
                             running_process.remainingTime, running_process.waitingTime);
 
-                    enqueue(q, running_process);
+                    enqueueCircQ(q, running_process);
                     isRunning      = false;
-                    context_switch = 1;
+                    
+                    /* Add context switching overhead only if there are other processes (Q.9)
+                     * "If it's the only process in the queue, then it should continue 
+                     * running without context switching (no 1 sec overhead)." */
+                    if (q->size > 1) {
+                        context_switch = 1;
+                    }
                 }
             }
             last_time = current_time;
         }
 
         /* Drain any newly arrived processes from the message queue */
-        struct msg message;
-        while (msgrcv(msg_id, &message, sizeof(message.process), 0, IPC_NOWAIT) != -1) {
-            /*                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-             * msgsz must be the size of the DATA portion only (excluding mtype).
-             * Was sizeof(message) which over-reads by sizeof(long).            */
-            PCB new_process           = message.process;
+        ProcessMsg message;
+        while (msgrcv(msg_id, &message, sizeof(ProcessMsg) - sizeof(long), 0, IPC_NOWAIT) != -1) {
+            /* Extract PCB data from the received message */
+            PCB new_process;
+            new_process.id            = message.id;
+            new_process.arrivalTime   = message.arrival;
+            new_process.runTime       = message.runtime;
+            new_process.priority      = message.priority;
             new_process.remainingTime = new_process.runTime;
             new_process.state         = 'W';
-            enqueue(q, new_process);
+            new_process.waitingTime   = 0;   /* Will be updated when process starts */
+            enqueueCircQ(q, new_process);
         }
 
         /* Dispatch next process if CPU is free and no context-switch overhead pending */
         if (q->size > 0 && !isRunning && context_switch == 0) {
-            running_process = dequeue(q);
+            running_process = dequeueCircQ(q);
             quantum_remain  = quantum;
 
             if (running_process.state == 'W' &&
@@ -95,13 +109,18 @@ void RR(int msg_id, int total_processes, int quantum) {
                 if (processID == 0) {
                     char remainingTimeStr[10];
                     sprintf(remainingTimeStr, "%d", running_process.remainingTime);
-                    execl("process.out", "process.out", remainingTimeStr, NULL);
+                    execl("./process.out", "process.out", remainingTimeStr, NULL);
                     perror("execl process.out failed");
                     exit(-1);
                 } else {
                     running_process.startTime = current_time;
                     running_process.pid       = processID;
                     running_process.state     = 'R';
+                    
+                    /* Track initial waiting time from arrival to start (Q.3, Q.7)
+                     * Waiting time is accumulated time the process hasn't been running */
+                    running_process.waitingTime += current_time - running_process.arrivalTime;
+                    
                     fprintf(log_file,
                             "At time %d process %d started arr %d total %d remain %d wait %d\n",
                             current_time, running_process.id,
