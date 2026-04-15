@@ -12,7 +12,7 @@ typedef struct {
 
 processData processes[MAX_PROCESSES];
 int process_count = 0;
-int msgqid = -1;
+int msgqid = -1; 
 
 void clearResources(int signum);
 
@@ -70,6 +70,13 @@ int main(int argc, char *argv[])
     if (msgqid == -1) { perror("msgget failed"); exit(-1); }
 
 
+    int sem_id = semget(SEMKEY, 1, IPC_CREAT | 0666);
+    if(sem_id == -1) { perror("semget failed"); exit(-1); }
+    union Semun sem_un;
+    sem_un.val = 0;
+    semctl(sem_id, 0, SETVAL, sem_un);
+
+
    
     //4 fork and exec clk
     pid_t clk_pid = fork();
@@ -103,46 +110,43 @@ int main(int argc, char *argv[])
         perror("execl scheduler failed");   
         exit(1); 
     }
-
-   
-    //6 the main loop: check every clock cycle if any process has arrived and send it to the scheduler through the message queue
     int sent = 0;
     int prev_clk = -1;
+    bool scheduler_done = false;
 
-    while (sent < process_count)
-    {
+    while(!scheduler_done) {
         int now = getClk();
-
-        if (now == prev_clk) {
-            usleep(100000); // sleep 0.1s to avoid busy waiting
-            continue;
-        }
+        if(now == prev_clk) { usleep(10000); continue; }
         prev_clk = now;
 
-        for (int i = 0; i < process_count; i++)
-        {
-            if (processes[i].arrivaltime != now) continue;
-
-            ProcessMsg message;
-            message.mtype   = 1;           
-            message.id = processes[i].id;
-            message.arrival = processes[i].arrivaltime;
-            message.runtime = processes[i].runningtime;
-            message.priority = processes[i].priority;
-
-            if (msgsnd(msgqid, &message, sizeof(ProcessMsg) - sizeof(long), 0) == -1) {
-                perror("msgsnd failed");
-            } else {
-                printf("Sent process %d to scheduler at time %d\n", processes[i].id, now);
-                sent++;
+        // Send all processes arriving at this exact tick
+        for(int i = 0; i < process_count; i++) {
+            if(processes[i].arrivaltime == now) {
+                ProcessMsg message;
+                message.mtype   = 1;
+                message.id      = processes[i].id;
+                message.arrival = processes[i].arrivaltime;
+                message.runtime = processes[i].runningtime;
+                message.priority= processes[i].priority;
+                
+                if(msgsnd(msgqid, &message, sizeof(ProcessMsg) - sizeof(long), 0) == -1) {
+                    perror("msgsnd failed");
+                } else {
+                    printf("Sent process %d at time %d\n", processes[i].id, now);
+                    sent++;
+                }
             }
         }
+
+        // Always signal scheduler: "done sending for this tick"
+        up(sem_id);
+
+        // After all sent, check non-blocking if scheduler finished
+        if(sent >= process_count) {
+            if(waitpid(sch_pid, NULL, WNOHANG) > 0)
+                scheduler_done = true;
+        }
     }
-
-    printf("All %d processes sent. Waiting for scheduler...\n", process_count);
-    
-    waitpid(sch_pid, NULL, 0);
-
     clearResources(0);
     return 0;
 }

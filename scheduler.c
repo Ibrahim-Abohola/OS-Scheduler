@@ -1,6 +1,6 @@
 #include "headers.h"
 #include "DataStructures.h"
-void HPF (int msg_id,int total_processes);
+void HPF (int msg_id,int sem_id,int total_processes);
 void RR (int msg_id, int total_processes, int quantum);
 
 /*==================== PCB Table ============================= */
@@ -359,12 +359,14 @@ int main(int argc, char * argv[])
         perror("msgget failed");
         exit(1);
     }
+    int sem_id = semget(SEMKEY, 1, 0666);
+    if(sem_id == -1) { perror("semget sem failed"); exit(1); }
     switch(algo) {
         case ALGO_RR:
             RR(msqid, TotalProcesses, quantum);
             break;
         case ALGO_HPF:  
-            HPF(msqid, TotalProcesses);
+            HPF(msqid, sem_id, TotalProcesses);
             break;
         case ALGO_FCFS_2CPUS: 
             schedule_FCFS_2CPUs(msqid, TotalProcesses, N, M);

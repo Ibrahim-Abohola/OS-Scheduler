@@ -1,6 +1,6 @@
 #include "PrioQueue.h"
 
-void HPF (int msg_id,int total_processes) {   
+void HPF (int msg_id,int sem_id,int total_processes) {   
     prioQueue* pq=create_pq(100);
     PCB running_process;
     int finished_processes=0;
@@ -13,11 +13,12 @@ void HPF (int msg_id,int total_processes) {
     int total_runtime = 0;
 
     int current_time=getClk();
-    int last_time=current_time;
+    int last_time=-1;
     int context_switching=0;
     while(finished_processes<total_processes){
         current_time=getClk();
         if(current_time>last_time){
+            down(sem_id); 
             if(context_switching>0){
                 context_switching--;
             }
@@ -50,7 +51,7 @@ void HPF (int msg_id,int total_processes) {
             new_process.priority=message.priority;
             new_process.id=message.id;
             new_process.state='W';
-            if(isRunning&&new_process.priority<running_process.priority){
+            if(isRunning&&new_process.priority<running_process.priority&&context_switching==0){
                 kill(running_process.pid,SIGSTOP);
                 running_process.state='S';
                 running_process.lastRun=current_time;
@@ -94,6 +95,8 @@ void HPF (int msg_id,int total_processes) {
                 isRunning=true;
             }
         }
+
+        
     }
     FILE* perf_file = fopen("HPFscheduler.perf", "w");
     float avg_wta = total_wta / total_processes;

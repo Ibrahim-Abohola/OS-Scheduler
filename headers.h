@@ -28,7 +28,32 @@ typedef short bool;
 #define SHKEY 300
 
 /* ======== Message queue key (generator <-> scheduler) ============= */         
-#define MSGKEY 200 
+#define MSGKEY 200
+
+///////////////////
+#define SEMKEY 100
+union Semun{
+    int val;               
+    struct semid_ds *buf;  
+    unsigned short *array; 
+    struct seminfo *__buf; 
+};
+
+static void up(int semid){
+    struct sembuf op;
+    op.sem_num = 0;
+    op.sem_op = 1;
+    op.sem_flg = 0;
+    semop(semid, &op, 1);
+}
+
+static void down(int semid){
+    struct sembuf op;
+    op.sem_num = 0;
+    op.sem_op = -1;
+    op.sem_flg = 0;
+    semop(semid, &op, 1);
+}
 
 /* ==================== Algorithm IDs ================================= */
 #define ALGO_HPF  1
