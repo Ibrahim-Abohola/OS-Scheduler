@@ -1,7 +1,7 @@
 #include "headers.h"
 #include "DataStructures.h"
 void HPF (int msg_id,int sem_id,int total_processes);
-void RR (int msg_id, int total_processes, int quantum);
+void RR (int msg_id, int sem_id, int total_processes, int quantum);
 
 /*==================== PCB Table ============================= */
 PCB pcbTable[1000]; // assuming maximum 100 processes
@@ -363,7 +363,7 @@ int main(int argc, char * argv[])
     if(sem_id == -1) { perror("semget sem failed"); exit(1); }
     switch(algo) {
         case ALGO_RR:
-            RR(msqid, TotalProcesses, quantum);
+            RR(msqid, sem_id, TotalProcesses, quantum);
             break;
         case ALGO_HPF:  
             HPF(msqid, sem_id, TotalProcesses);

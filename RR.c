@@ -1,7 +1,7 @@
 #include "circQ.h" 
 #include <math.h> 
 
-void RR(int msg_id, int total_processes, int quantum) {
+void RR(int msg_id, int sem_id, int total_processes, int quantum) {
     initClk();  /* initialize this TU's static shmaddr */
     CircQ *q = initCircQ(100);
     PCB running_process;
@@ -16,7 +16,7 @@ void RR(int msg_id, int total_processes, int quantum) {
     int   last_finish_time = 0; /* denominator for CPU utilisation */
 
     int current_time    = getClk();
-    int last_time       = current_time;
+    int last_time       = -1;
     int context_switch  = 0;
     int quantum_remain  = 0;
 
@@ -24,6 +24,8 @@ void RR(int msg_id, int total_processes, int quantum) {
         current_time = getClk();
 
         if (current_time > last_time) {
+            /* Synchronize with process generator via semaphore (same as HPF) */
+            down(sem_id);
             if (context_switch > 0) {
                 /* Burning the 1-sec context-switch overhead — CPU is idle */
                 context_switch--;
