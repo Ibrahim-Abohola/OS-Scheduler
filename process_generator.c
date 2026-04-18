@@ -119,7 +119,6 @@ int main(int argc, char *argv[])
         if(now == prev_clk) { usleep(10000); continue; }
         prev_clk = now;
 
-        // Send all processes arriving at this exact tick
         for(int i = 0; i < process_count; i++) {
             if(processes[i].arrivaltime == now) {
                 ProcessMsg message;
@@ -138,10 +137,8 @@ int main(int argc, char *argv[])
             }
         }
 
-        // Always signal scheduler: "done sending for this tick"
         up(sem_id);
 
-        // After all sent, check non-blocking if scheduler finished
         if(sent >= process_count) {
             if(waitpid(sch_pid, NULL, WNOHANG) > 0)
                 scheduler_done = true;
@@ -153,9 +150,9 @@ int main(int argc, char *argv[])
 
 void clearResources(int signum)
 {
-    signal(SIGINT, SIG_DFL); // reset signal handler to default
+    signal(SIGINT, SIG_DFL); 
     if (msgqid != -1) {
-        msgctl(msgqid, IPC_RMID, NULL); // delete message queue
+        msgctl(msgqid, IPC_RMID, NULL); 
         printf("Message queue removed.\n");
     }
     destroyClk(true);

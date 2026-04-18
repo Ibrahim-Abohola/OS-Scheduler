@@ -41,7 +41,7 @@ void HPF (int msg_id,int sem_id,int total_processes) {
             }
             last_time=current_time;
         }
-
+        
         ProcessMsg message;
         while(msgrcv(msg_id,&message,sizeof(message),0,IPC_NOWAIT)!=-1){
             PCB new_process;
