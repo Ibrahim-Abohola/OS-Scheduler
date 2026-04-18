@@ -27,19 +27,35 @@ typedef short bool;
 
 #define SHKEY 300
 
-/* ======== Message queue key (generator <-> scheduler) ============= */         
-#define MSGKEY 200
+/* ======== Message queue keys (generator <-> schedulers) ============= */         
+#define MSGKEY 200      // legacy, not used in new architecture
+#define MSGKEY1 65      // queue for scheduler 1
+#define MSGKEY2 66      // queue for scheduler 2
 
 ///////////////////
 #define SEMKEY 100
 
-#define PROC_SEM_KEY 400  
+#define SEMKEY_cpu1 103
+#define SEMKEY_cpu2 104
+
+#define PROC_SEM_KEY 400
+
+/* ======== Shared memory for work stealing ============= */
+#define STEAL_SHM_KEY 500
+#define STEAL_SEM_KEY 101
+
+/* ======== Semaphore indices within steal semaphore set ============= */
+#define SEM_BARRIER  0   // both schedulers reached tick N
+#define SEM_REQUEST  1   // coordinator signals worker to send process
+#define SEM_DONE     2   // worker signals coordinator that process is in shm  
 union Semun{
     int val;               
     struct semid_ds *buf;  
     unsigned short *array; 
     struct seminfo *__buf; 
 };
+
+
 
 static void up(int semid){
     struct sembuf op;
@@ -57,6 +73,15 @@ static void down(int semid){
     semop(semid, &op, 1);
 }
 
+static void up_n(int semid, int n) {
+    struct sembuf op = {n, 1, 0};
+    semop(semid, &op, 1);
+}
+
+static void down_n(int semid, int n) {
+    struct sembuf op = {n, -1, 0};
+    semop(semid, &op, 1);
+}
 /* ==================== Algorithm IDs ================================= */
 #define ALGO_HPF  1
 #define ALGO_RR   2
@@ -70,6 +95,10 @@ typedef struct {
     int  runtime;
     int  priority;
 } ProcessMsg;
+
+/* Special message types */
+#define PROCESS_MSG_TYPE 1
+#define END_OF_STREAM_MSG_TYPE 2
 
 
 

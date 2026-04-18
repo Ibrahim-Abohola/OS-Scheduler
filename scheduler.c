@@ -79,40 +79,24 @@ void start_process(FILE * log_file, PCB * pcb, int currentTime) {
     log_scheduler_event(log_file, currentTime, pcb, "started");
 }
 /*=========================== Receive new Processes from process generator by the message queue ===========================================*/
-int receive_process_FCFS(int msqid,Queue * readyQueue,int cpu_id)
+int receive_process_FCFS(int msqid,Queue * readyQueue,int cpu_id, int * generator_done)
 {
     ProcessMsg msg;
     int received = 0;
     while(msgrcv(msqid, &msg, sizeof(ProcessMsg) - sizeof(long), 0, IPC_NOWAIT) != -1) {
-        PCB * pcb = new_process(msg.id, msg.arrival, msg.runtime, msg.priority);
-        pcb->cpuid = cpu_id;
-        enqueue(readyQueue, pcb);
-        printf("Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", cpu_id, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
-        received++;
-    }
-    return received;
-}
-int receive_process_FCFS2CPUs(int msqid,Queue * q1,Queue * q2)
-{
-    ProcessMsg msg;
-    int received = 0;
-    while(msgrcv(msqid, &msg, sizeof(ProcessMsg) - sizeof(long), 0, IPC_NOWAIT) != -1) {
-        PCB * pcb = new_process(msg.id, msg.arrival, msg.runtime, msg.priority);
-        if(q1->size <= q2->size)
-        { 
-            pcb->cpuid = 1;
-            enqueue(q1, pcb);
-        } 
-        else
-        {
-            pcb->cpuid = 2;
-            enqueue(q2, pcb);
+        if(msg.mtype == END_OF_STREAM_MSG_TYPE) {
+            *generator_done = 1;
+        } else {
+            PCB * pcb = new_process(msg.id, msg.arrival, msg.runtime, msg.priority);
+            pcb->cpuid = cpu_id;
+            enqueue(readyQueue, pcb);
+            printf("Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", cpu_id, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
+            received++;
         }
-        printf("At time %d Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", getClk(), pcb->cpuid, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
-        received++;
     }
     return received;
 }
+
 /*============================================ Performance Calculations  ==============================================================================================*/
 void calculate_performance(FILE * perfFile,int cpuid) {
     double total_WTA = 0;
@@ -161,230 +145,286 @@ void calculate_performance(FILE * perfFile,int cpuid) {
     fflush(perfFile);
 
 }
-/*======================================== FCFS 1 CPU ===============================================================================*/
-void schedule_FCFS(int msqid,int semid,int TotalProcesses) {
-    Queue  readyQueue;
+
+
+void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
+    StealShm* shm, int steal_sem_id, int TotalProcesses, int N, int M)
+{
+    Queue readyQueue;
     initQueue(&readyQueue);
-    PCB * currentProcess = NULL;
-    int done_count = 0; // count how many processes have finished
-    int last_time = -1; // to track clock cycles
-    int n = pcbTableSize; // total number of processes
-    scheduler_log = fopen("scheduler.log", "w");
-    while (done_count < TotalProcesses || currentProcess != NULL || readyQueue.size > 0) {
-         int currentTime = getClk();
-        if(currentTime == last_time)    
-        {
-            usleep(50000);
-            continue; // only check for stealing every clock tick
-        }
+    PCB*  currentProcess = NULL;
+    int   done_count     = 0;
+    int   last_time      = -1;
+    int   overhead       = 0;
+    int  generator_done = 0;
+    int next_steal_check = N;    
+    bool pending_recheck = false;
+
+    FILE* log_file = fopen(cpu_id == 1 ? "scheduler1.log" : "scheduler2.log", "w");
+
+    while (!generator_done || currentProcess != NULL || readyQueue.size > 0) {
+        bool finished = false;
+        int currentTime = getClk();
+        if(currentTime == last_time)  continue; 
         last_time = currentTime;
+
         down(semid); 
-        if(currentProcess) currentProcess->remainingTime--;
-        receive_process_FCFS(msqid, &readyQueue, 1);
-        if (currentProcess == NULL && readyQueue.size > 0) {
-            currentProcess = dequeue(&readyQueue);
-            start_process(scheduler_log, currentProcess, currentTime);
-        }
+        
+        
+       receive_process_FCFS(msqid, &readyQueue, cpu_id, &generator_done);
+
+        // ── Check if current process finished ───────────
         if(currentProcess) {
             pid_t finished_pid = waitpid(-1, NULL, WNOHANG);
             if(finished_pid > 0 && finished_pid == currentProcess->pid) {
-                currentProcess->finishTime = currentTime;
-                currentProcess->state = 'F'; // Finished state
+                finished = true;
+                int ps = semget(PROC_SEM_KEY + currentProcess->id, 1, 0666);
+                semctl(ps, 0, IPC_RMID);
+
+                currentProcess->finishTime  = currentTime;
+                currentProcess->state       = 'F';
                 currentProcess->remainingTime = 0;
-                log_scheduler_event(scheduler_log, currentProcess->finishTime, currentProcess, "finished");
+                log_scheduler_event(log_file, currentTime, currentProcess, "finished");
                 done_count++;
                 currentProcess = NULL;
-                }
-            }
-        if(!currentProcess && readyQueue.size > 0)
-        {
-            currentProcess = dequeue(&readyQueue);
-            start_process(scheduler_log, currentProcess, currentTime);
-        }
-    }
-    FILE * scheduler_perf = fopen("scheduler.perf", "w");
-    calculate_performance(scheduler_perf, 1);
-    fclose(scheduler_log);
-    fclose(scheduler_perf);
-}
-/*=================================== FCFS 2 CPUs ===============================================================*/
-void schedule_FCFS_2CPUs(int msqid,int semid,int TotalProcesses, int N, int M)
-{
-    printf("Starting FCFS with 2 CPUs, N=%d, M=%d\n", N, M);
-    Queue q1; initQueue(&q1);
-    printf("Initialized Queue 1\n");
-    Queue q2; initQueue(&q2);
-    printf("Initialized Queue 2\n");
-    PCB * currentProcess1 = NULL;
-    PCB * currentProcess2 = NULL;
-    int done_count = 0; // count how many processes have finished
-    int overhead1 = 0; // stealing overhead for CPU 1
-    int overhead2 = 0; // stealing overhead for CPU 2
-    int steal_timer = 0; // counts up to N to steal then acc to diff threshold M
-    int last_time= -1; // tick every clock tick to check for stealing
-    scheduler1_log = fopen("scheduler1.log", "w");
-    scheduler2_log = fopen("scheduler2.log", "w");
-    while (done_count < TotalProcesses || currentProcess1 != NULL || currentProcess2 != NULL || q1.size > 0 || q2.size > 0) {
-        int currentTime = getClk();
-        if(currentTime == last_time) 
-            continue; 
-        last_time = currentTime;
-        down(semid);
-        receive_process_FCFS2CPUs(msqid, &q1, &q2);
-
-         // steal logic: every N time units, check the difference in queue remaining time and steal if the difference is greater than M
-        if(currentTime % N == 0 && currentTime != 0)
-        {
-            steal_timer = 0;
-            int q1_remaining_time = totalRemainingTime(&q1) + (currentProcess1 ? currentProcess1->remainingTime : 0);
-            int q2_remaining_time = totalRemainingTime(&q2) + (currentProcess2 ? currentProcess2->remainingTime : 0);
-            int steals = 0;
-            int steal_start_time = currentTime;   // snapshot time at start of steal check
-            while(abs(q1_remaining_time - q2_remaining_time) > M)
-            {
-                int steal_time = steal_start_time + steals * 3; // each steal adds 3s overhead, so next steal can only happen after that
-                if(q1_remaining_time > q2_remaining_time) 
-                {
-                // Steal from q1 to q2
-                PCB * process = steal(&q1);
-                process->cpuid = 2;
-                enqueue(&q2, process);
-                fprintf(scheduler1_log, "At time %d process %d was stolen\n", steal_time, process->id);
-                steals++;
-                }
-                else
-                {
-                // Steal from q2 to q1
-                PCB * process = steal(&q2);
-                process->cpuid = 1;
-                enqueue(&q1, process);
-                fprintf(scheduler2_log, "At time %d process %d was stolen\n", steal_time, process->id);   
-                steals++;
-                }
-                q1_remaining_time = totalRemainingTime(&q1) + (currentProcess1 ? currentProcess1->remainingTime : 0);
-                q2_remaining_time = totalRemainingTime(&q2) + (currentProcess2 ? currentProcess2->remainingTime : 0);
-
-            }
-            if(steals > 0){
-                // Stealing overhead of 3s for both CPUs
-                overhead1 = steals * 3;
-                overhead2 = steals * 3;
-                if(currentProcess1) {
-                    currentProcess1->waitingTime += 3 * steals; // add the overhead to waiting time
-                    kill(currentProcess1->pid, SIGSTOP);  // freeze it
-                }
-                if(currentProcess2) {
-                    currentProcess2->waitingTime += 3 * steals; // add the overhead to waiting time
-                    kill(currentProcess2->pid, SIGSTOP);  // freeze it
-                }
-                continue;
             }
         }
-      
-        bool cpu1_stalled = overhead1 > 0;
-        bool cpu2_stalled = overhead2 > 0;
-        if (!cpu1_stalled && currentProcess1 == NULL && q1.size > 0) {
-            currentProcess1 = dequeue(&q1);
-            start_process(scheduler1_log, currentProcess1,currentTime);
-        }
-        if (!cpu2_stalled && currentProcess2 == NULL && q2.size > 0) {
-            currentProcess2 = dequeue(&q2);
-            start_process(scheduler2_log, currentProcess2,currentTime);
-        }
-       
-     
-        if(currentProcess1 && !cpu1_stalled){
-         currentProcess1->remainingTime--;
-         int s1 = semget(PROC_SEM_KEY + currentProcess1->id, 1, 0666);
-            if(s1 == -1) { perror("semget failed"); exit(1); }
-            up(s1); // signal the process to run for one time unit
-        }
 
-        if(currentProcess2 && !cpu2_stalled) {
-            currentProcess2->remainingTime--;
-            int s2 = semget(PROC_SEM_KEY + currentProcess2->id, 1, 0666);
-            if(s2 == -1) { perror("semget failed"); exit(1); }
-            up(s2); // signal the process to run for one time unit
-        }
-        if(overhead1 > 0) overhead1--;
-        if(overhead2 > 0) overhead2--; 
-          if(overhead1 == 0 && cpu1_stalled && currentProcess1) {
-            kill(currentProcess1->pid, SIGCONT);
-        }
-        if(overhead2 == 0 && cpu2_stalled && currentProcess2) {
-            kill(currentProcess2->pid, SIGCONT);
+         
+        if(currentTime == next_steal_check) {
+            bool steal_occurred = false;
+            int my_remaining = totalRemainingTime(&readyQueue)
+                            + (currentProcess ? currentProcess->remainingTime : 0);
+            if(cpu_id == 1) { shm->remaining1 = my_remaining; shm->cpu1_arrived = 1; }
+            else            { shm->remaining2 = my_remaining; shm->cpu2_arrived  = 1; }
+
+            // Barrier: wait until both CPUs write remaining time
+            while(!(shm->cpu1_arrived && shm->cpu2_arrived));
+
+            // ── CPU1 = coordinator ────────────────────────────────────────────────
+            if(cpu_id == 1) {
+                int steals = 0;
+                int r1 = shm->remaining1;
+                int r2 = shm->remaining2;
+                if(abs(r1 - r2) > M) {
+                    int steal_time = currentTime + steals * 3;
+                    
+                    if(r1 > r2) {
+                        // steal from CPU1's own queue → give to CPU2
+                        if(readyQueue.size == 0) break;
+                        PCB* stolen     = steal(&readyQueue);
+                        stolen->cpuid   = 2;
+                        shm->stolen_process = *stolen;
+                        shm->steal_from = 1;
+                        shm->steal_ready = 1;
+                        fprintf(log_file, "At time %d process %d was stolen\n",
+                                steal_time, stolen->id);
+                        fflush(log_file);
+                        up_n(steal_sem_id, SEM_REQUEST);    
+                        down_n(steal_sem_id, SEM_DONE);   
+                        r1 -= shm->stolen_process.remainingTime;
+                        r2 += shm->stolen_process.remainingTime;
+
+                    } else {
+                        // steal from CPU2's queue → give to CPU1
+                        shm->steal_from  = 2;
+                        shm->steal_ready = 0;
+                        up_n(steal_sem_id, SEM_REQUEST);    
+                        down_n(steal_sem_id, SEM_DONE);     
+
+                        if(!shm->steal_ready) break;        
+
+                        PCB* received = new_process(
+                            shm->stolen_process.id,
+                            shm->stolen_process.arrivalTime,
+                            shm->stolen_process.runTime,
+                            shm->stolen_process.priority);
+                        received->remainingTime = shm->stolen_process.remainingTime;
+                        received->waitingTime   = shm->stolen_process.waitingTime;
+                        received->cpuid = 1;
+                        enqueue(&readyQueue, received);
+                        r1 += shm->stolen_process.remainingTime;
+                        r2 -= shm->stolen_process.remainingTime;
+                    }
+                    steals++;
+                }
+              
+
+                shm->steal_checkpoint = steals;
+                shm->steal_from = 0;                        
+                up_n(steal_sem_id, SEM_REQUEST);           
+                down_n(steal_sem_id, SEM_DONE);             
+
+                // Apply overhead to this CPU
+                if(steals > 0) {
+                    overhead = steals * 3;
+                    if(currentProcess) {
+                        currentProcess->waitingTime += steals * 3;
+                        kill(currentProcess->pid, SIGSTOP);
+                    }
+                    
+                }
+                steal_occurred = steals > 0;
+                // Reset barrier flags for the next N-tick check
+                shm->cpu1_arrived = 0;
+                shm->cpu2_arrived = 0;
+           
+
+            // ── CPU2 = worker ─────────────
+            } else {
+                int steals_done = 0;
+
+                while(1) {
+                    down_n(steal_sem_id, SEM_REQUEST);      
+
+                    if(shm->steal_from == 0) {
+                        steals_done = shm->steal_checkpoint;
+                        up_n(steal_sem_id, SEM_DONE);       
+                        break;
+
+                    } else if(shm->steal_from == 1) {
+                        PCB* received = new_process(
+                            shm->stolen_process.id,
+                            shm->stolen_process.arrivalTime,
+                            shm->stolen_process.runTime,
+                            shm->stolen_process.priority);
+                        received->remainingTime = shm->stolen_process.remainingTime;
+                        received->waitingTime   = shm->stolen_process.waitingTime;
+                        received->cpuid = 2;
+                        enqueue(&readyQueue, received);
+                        steals_done++;
+                        up_n(steal_sem_id, SEM_DONE);      
+
+                    } else if(shm->steal_from == 2) {
+                        if(readyQueue.size > 0) {
+                            PCB* stolen   = steal(&readyQueue);
+                            stolen->cpuid = 1;
+                            shm->stolen_process = *stolen;
+                            shm->steal_ready = 1;
+                            int steal_time = currentTime + steals_done * 3;
+                            fprintf(log_file, "At time %d process %d was stolen\n",
+                                    steal_time, stolen->id);
+                            fflush(log_file);
+                            steals_done++;
+                        } else {
+                            shm->steal_ready = 0;           
+                        }
+                        up_n(steal_sem_id, SEM_DONE);      
+                    }
+                }
+
+                if(steals_done > 0) {
+                    overhead = steals_done * 3;
+                    if(currentProcess) {
+                        currentProcess->waitingTime += steals_done * 3;
+                        kill(currentProcess->pid, SIGSTOP);
+                    }
+                }
+               steal_occurred =steal_occurred || steals_done > 0;
+            }
+            next_steal_check = steal_occurred ? currentTime + 3 : (currentTime / N + 1) * N ;
+            if(steal_occurred) continue; 
         } 
+      
+        bool is_stalled = overhead > 0;
+        if(overhead > 0) overhead--;
+        if(overhead == 0 && is_stalled && currentProcess){
+            kill(currentProcess->pid, SIGCONT);
+        }
+
+        if(!is_stalled && currentProcess == NULL && readyQueue.size > 0 && !finished) {
+            currentProcess = dequeue(&readyQueue);
+            start_process(log_file, currentProcess, currentTime);
+        }
+
+        if(currentProcess && !is_stalled) {
+            currentProcess->remainingTime--;
+            int ps = semget(PROC_SEM_KEY + currentProcess->id, 1, 0666);
+            if(ps == -1) { perror("semget proc sem"); exit(1); }
+            up(ps);
+            
+        }
         
-        pid_t finished_pid;
-        while((finished_pid = waitpid(-1, NULL, WNOHANG)) > 0)
-        {
-            if(currentProcess1 && finished_pid == currentProcess1->pid) {
-                int s = semget(PROC_SEM_KEY + currentProcess1->id, 1, 0666);
-                semctl(s, 0, IPC_RMID);   // clean up semaphore
-                currentProcess1->finishTime = currentTime;
-                currentProcess1->remainingTime = 0;
-                currentProcess1->state = 'F';
-                log_scheduler_event(scheduler1_log, currentTime, currentProcess1, "finished");
-                done_count++;
-                currentProcess1 = NULL;
-            }
-            if(currentProcess2 && finished_pid == currentProcess2->pid) {
-                int s = semget(PROC_SEM_KEY + currentProcess2->id, 1, 0666);
-                semctl(s, 0, IPC_RMID);   // clean up semaphore
-                currentProcess2->finishTime = currentTime;
-                currentProcess2->remainingTime = 0;
-                currentProcess2->state = 'F';
-                log_scheduler_event(scheduler2_log, currentTime, currentProcess2, "finished");
-                done_count++;
-                currentProcess2 = NULL;
-            }
-        }       
-       
+        
     }
-    FILE * scheduler1_perf = fopen("scheduler1.perf", "w");
-    FILE * scheduler2_perf = fopen("scheduler2.perf", "w");
-    calculate_performance(scheduler1_perf, 1);
-    calculate_performance(scheduler2_perf, 2);
-    fclose(scheduler1_log);
-    fclose(scheduler2_log);
-    fclose(scheduler1_perf);
-    fclose(scheduler2_perf);
+
+    FILE* perf_file = fopen(cpu_id == 1 ? "scheduler1.perf" : "scheduler2.perf", "w");
+    calculate_performance(perf_file, cpu_id);
+    fclose(log_file);
+    fclose(perf_file);
 }
-     
 
 int main(int argc, char * argv[])
 {
     initClk();
     signal(SIGUSR1, SIG_IGN);
-    //TODO implement the scheduler :)
-    //upon termination release the clock resources.
-    if(argc < 2) {
-        fprintf(stderr, "Usage: %s <algorithm> [parameters]\n", argv[0]);
+    
+    if(argc < 3) {
+        fprintf(stderr, "Usage: %s <cpu_id> <algorithm> <total_processes> [parameters]\n", argv[0]);
         exit(1);
     }
-    int algorithm = atoi(argv[1]);
-    if(algorithm == 2 && argc < 4) {
-        fprintf(stderr, "Usage for hpf: %s 2 <n> <q> \n", argv[0]);
+    
+    int cpu_id = atoi(argv[1]);
+    int algo = atoi(argv[2]);
+    int TotalProcesses = atoi(argv[3]);
+    int quantum = argc > 4 ? atoi(argv[4]) : 0;
+    int N = argc > 4 ? atoi(argv[4]) : 0;
+    int M = argc > 5 ? atoi(argv[5]) : 0;
+    
+    if(algo == ALGO_RR && argc < 5) {
+        fprintf(stderr, "Usage for RR: %s <cpu_id> 2 <total> <quantum>\n", argv[0]);
         exit(1);
     }
-    else if(algorithm == 3 && argc < 5) {
-        fprintf(stderr, "Usage for 2 CPUs: %s 3 <n> <N> <M> \n", argv[0]);
+    else if(algo == ALGO_FCFS_2CPUS && argc < 6) {
+        fprintf(stderr, "Usage for 2CPUs: %s <cpu_id> 3 <total> <N> <M>\n", argv[0]);
         exit(1);
     }
-    int algo = atoi(argv[1]);
-    int TotalProcesses = atoi(argv[2]);
-    int quantum = argc > 3 ? atoi(argv[3]) : 0;
-    int N = argc > 3 ? atoi(argv[3]) : 0;
-    int M = argc > 4 ? atoi(argv[4]) : 0;
 
-    key_t key = ftok("keyfile", MSGKEY);
-    int msqid = msgget(key, 0666 | IPC_CREAT);
+    key_t key = ftok("keyfile", cpu_id == 1 ? MSGKEY1 : MSGKEY2);
+    if(key == -1) { perror("ftok failed"); exit(-1); }
+    int msqid = msgget(key, 0666);
     if(msqid == -1) {
         perror("msgget failed");
         exit(1);
     }
+    
     int sem_id = semget(SEMKEY, 1, 0666);
     if(sem_id == -1) { perror("semget sem failed"); exit(1); }
+    
+    
+    int steal_sem_id = -1;
+    StealShm* shm = NULL;
+    if(algo == ALGO_FCFS_2CPUS) {
+        int shmid = shmget(STEAL_SHM_KEY, sizeof(StealShm), IPC_CREAT | 0666);
+        if(shmid == -1) { perror("shmget failed"); exit(1); }
+        
+        shm = (StealShm*)shmat(shmid, 0, 0);
+        if((long)shm == -1) { perror("shmat failed"); exit(1); }
+        
+        if(cpu_id == 1) {
+            shm->remaining1 = 0;
+            shm->remaining2 = 0;
+            shm->steal_from = 0;
+            shm->steal_ready = 0;
+            shm->barrier_count = 0;
+            shm->steal_checkpoint = 0;
+            shm->cpu1_arrived = 0;
+            shm->cpu2_arrived = 0;
+        }
+        
+        steal_sem_id = semget(STEAL_SEM_KEY, 3, IPC_CREAT | 0666);
+        if(steal_sem_id == -1) { perror("semget steal failed"); exit(1); }
+        
+        if(cpu_id == 1) {
+            union Semun sem_un;
+            sem_un.val = 0;
+            semctl(steal_sem_id, SEM_BARRIER, SETVAL, sem_un);
+            semctl(steal_sem_id, SEM_REQUEST, SETVAL, sem_un);
+            semctl(steal_sem_id, SEM_DONE, SETVAL, sem_un);
+        }
+    
+    }
+    
     switch(algo) {
         case ALGO_RR:
             RR(msqid, sem_id, TotalProcesses, quantum);
@@ -393,12 +433,26 @@ int main(int argc, char * argv[])
             HPF(msqid, sem_id, TotalProcesses);
             break;
         case ALGO_FCFS_2CPUS: 
-            schedule_FCFS_2CPUs(msqid,sem_id, TotalProcesses, N, M);
+            schedule_FCFS_single_with_stealing(cpu_id, msqid, sem_id, shm, steal_sem_id, TotalProcesses, N, M);
             break;
         default:
             fprintf(stderr, "Unknown algorithm ID: %d\n", algo);
             exit(1);
     }
-    destroyClk(true);
+    
+    if(algo == ALGO_FCFS_2CPUS && cpu_id == 1) {
+        int shmid = shmget(STEAL_SHM_KEY, 0, 0666);
+        if(shmid != -1) {
+            shmctl(shmid, IPC_RMID, NULL);
+            printf("Shared memory removed by CPU1.\n");
+        }
+        
+        int steal_sem_id_cleanup = semget(STEAL_SEM_KEY, 0, 0666);
+        if(steal_sem_id_cleanup != -1) {
+            semctl(steal_sem_id_cleanup, 0, IPC_RMID);
+            printf("Steal semaphores removed by CPU1.\n");
+        }
+    }
+    
     return 0;
 }
