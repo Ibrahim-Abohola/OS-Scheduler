@@ -12,7 +12,8 @@ typedef struct {
 
 processData processes[MAX_PROCESSES];
 int process_count = 0;
-int msgqid = -1; 
+int msgqid = -1;
+int sem_id = -1; 
 
 void clearResources(int signum);
 
@@ -71,7 +72,7 @@ int main(int argc, char *argv[])
     if (msgqid == -1) { perror("msgget failed"); exit(-1); }
 
 
-    int sem_id = semget(SEMKEY, 1, IPC_CREAT | 0666);
+    sem_id = semget(SEMKEY, 1, IPC_CREAT | 0666);
     if(sem_id == -1) { perror("semget failed"); exit(-1); }
     union Semun sem_un;
     sem_un.val = 0;
@@ -154,6 +155,7 @@ void clearResources(int signum)
     signal(SIGINT, SIG_DFL); 
     if (msgqid != -1) {
         msgctl(msgqid, IPC_RMID, NULL); 
+        semctl(sem_id, 0, IPC_RMID);
         printf("Message queue removed.\n");
     }
     destroyClk(true);
