@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
     msgqid = msgqid1;
 
 
-    int sem_id = semget(SEMKEY, 1, IPC_CREAT | 0666);
+    sem_id = semget(SEMKEY, 1, IPC_CREAT | 0666);
     if(sem_id == -1) { perror("semget failed"); exit(-1); }
     union Semun sem_un;
     sem_un.val = 0;
@@ -199,9 +199,16 @@ int main(int argc, char *argv[])
 void clearResources(int signum)
 {
     signal(SIGINT, SIG_DFL); 
+<<<<<<< HEAD
     if (msgqid1 != -1) {
         msgctl(msgqid1, IPC_RMID, NULL); 
         printf("Message queue 1 removed.\n");
+=======
+    if (msgqid != -1) {
+        msgctl(msgqid, IPC_RMID, NULL); 
+        semctl(sem_id, 0, IPC_RMID);
+        printf("Message queue removed.\n");
+>>>>>>> e8a181b369d85728092a249ec880473eccf7d638
     }
     if (msgqid2 != -1) {
         msgctl(msgqid2, IPC_RMID, NULL); 

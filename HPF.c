@@ -6,6 +6,12 @@ void HPF (int msg_id,int sem_id,int total_processes) {
     int finished_processes=0;
     bool isRunning=false;
     FILE* log_file=fopen("HPFscheduler.log","w");
+
+    int process_sem_id = semget(PROC_SEM_KEY , 1, IPC_CREAT | 0666);
+    if(process_sem_id == -1) { perror("semget failed"); exit(-1); }
+    union Semun sem_un;
+    sem_un.val = 0;
+    semctl(process_sem_id, 0, SETVAL, sem_un);
     
     float total_wta = 0;
     float total_waiting = 0;
@@ -15,6 +21,7 @@ void HPF (int msg_id,int sem_id,int total_processes) {
     int current_time=getClk();
     int last_time=-1;
     int context_switching=0;
+    
     while(finished_processes<total_processes){
         current_time=getClk();
         if(current_time>last_time){
@@ -25,6 +32,7 @@ void HPF (int msg_id,int sem_id,int total_processes) {
             else if (isRunning){
                 running_process.remainingTime--;
                 total_runtime++;
+                up(process_sem_id);
                 if(running_process.remainingTime==0){
                     int ta=current_time-running_process.arrivalTime;
                     float wta=(float)ta/running_process.runTime;
@@ -71,8 +79,10 @@ void HPF (int msg_id,int sem_id,int total_processes) {
                 int processID=fork();
                 if(processID==0){
                     char remainingTimeStr[10];
+                    char semIdStr[10];
                     sprintf(remainingTimeStr, "%d", running_process.remainingTime);
-                    execl("./process.out", "process.out", remainingTimeStr, NULL);
+                    sprintf(semIdStr, "%d", process_sem_id);
+                    execl("./process.out", "process.out", remainingTimeStr, semIdStr, NULL);
                 }
                 else{
                     running_process.startTime=current_time;
@@ -108,7 +118,7 @@ void HPF (int msg_id,int sem_id,int total_processes) {
     fprintf(perf_file, "Avg WTA = %.2f\n", avg_wta);
     fprintf(perf_file, "Avg Waiting = %.2f\n", avg_wait);
     fprintf(perf_file, "Std WTA = %.2f\n", std_dev);
-    
+    semctl(process_sem_id,0,IPC_RMID);
     fclose(log_file);
     fclose(perf_file);
 }
