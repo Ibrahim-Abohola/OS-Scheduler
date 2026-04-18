@@ -15,6 +15,7 @@ int process_count = 0;
 int msgqid = -1;
 int msgqid1 = -1;
 int msgqid2 = -1; 
+int sem_id = -1;
 
 void clearResources(int signum);
 
