@@ -45,6 +45,12 @@ void log_scheduler_event(FILE * log_file, int time, PCB * pcb, const char * even
 /*=========================================================================*/
 
 void start_process(FILE * log_file, PCB * pcb, int currentTime) {
+
+    int sem_id = semget(PROC_SEM_KEY + pcb->id, 1, IPC_CREAT | 0666);
+    if(sem_id == -1) { perror("semget failed"); exit(-1); }
+    union Semun sem_un;
+    sem_un.val = 0;
+    semctl(sem_id, 0, SETVAL, sem_un);
     
     pid_t pid = fork();
     if (pid == -1)
@@ -55,8 +61,10 @@ void start_process(FILE * log_file, PCB * pcb, int currentTime) {
     else if (pid == 0)
     {
         char remainingTimeStr[10];
+        char semIdStr[10];
         sprintf(remainingTimeStr, "%d", pcb->remainingTime);
-        execl("./process.out", "process.out", remainingTimeStr, NULL);
+        sprintf(semIdStr, "%d", sem_id);
+        execl("./process.out", "process.out", remainingTimeStr, semIdStr, NULL);
         perror("execl failed");
         exit(1);
     }
@@ -100,7 +108,7 @@ int receive_process_FCFS2CPUs(int msqid,Queue * q1,Queue * q2)
             pcb->cpuid = 2;
             enqueue(q2, pcb);
         }
-        printf("Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", pcb->cpuid, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
+        printf("At time %d Process added to Queue %d: PID=%d, Arrival=%d, Runtime=%d, Priority=%d\n", getClk(), pcb->cpuid, pcb->id, pcb->arrivalTime, pcb->runTime, pcb->priority);
         received++;
     }
     return received;
@@ -154,7 +162,7 @@ void calculate_performance(FILE * perfFile,int cpuid) {
 
 }
 /*======================================== FCFS 1 CPU ===============================================================================*/
-void schedule_FCFS(int msqid,int TotalProcesses) {
+void schedule_FCFS(int msqid,int semid,int TotalProcesses) {
     Queue  readyQueue;
     initQueue(&readyQueue);
     PCB * currentProcess = NULL;
@@ -170,6 +178,7 @@ void schedule_FCFS(int msqid,int TotalProcesses) {
             continue; // only check for stealing every clock tick
         }
         last_time = currentTime;
+        down(semid); 
         if(currentProcess) currentProcess->remainingTime--;
         receive_process_FCFS(msqid, &readyQueue, 1);
         if (currentProcess == NULL && readyQueue.size > 0) {
@@ -199,7 +208,7 @@ void schedule_FCFS(int msqid,int TotalProcesses) {
     fclose(scheduler_perf);
 }
 /*=================================== FCFS 2 CPUs ===============================================================*/
-void schedule_FCFS_2CPUs(int msqid,int TotalProcesses, int N, int M)
+void schedule_FCFS_2CPUs(int msqid,int semid,int TotalProcesses, int N, int M)
 {
     printf("Starting FCFS with 2 CPUs, N=%d, M=%d\n", N, M);
     Queue q1; initQueue(&q1);
@@ -218,57 +227,12 @@ void schedule_FCFS_2CPUs(int msqid,int TotalProcesses, int N, int M)
     while (done_count < TotalProcesses || currentProcess1 != NULL || currentProcess2 != NULL || q1.size > 0 || q2.size > 0) {
         int currentTime = getClk();
         if(currentTime == last_time) 
-        {
-            usleep(50000);
             continue; 
-        }
         last_time = currentTime;
-        bool cpu1_stalled = overhead1 > 0;
-        bool cpu2_stalled = overhead2 > 0;
-        if(currentProcess1 && !cpu1_stalled) currentProcess1->remainingTime--;
-        if(currentProcess2 && !cpu2_stalled) currentProcess2->remainingTime--;
-        steal_timer++;
-        if(overhead1 > 0) overhead1--;
-        if(overhead2 > 0) overhead2--;
-
+        down(semid);
         receive_process_FCFS2CPUs(msqid, &q1, &q2);
 
-        if(overhead1 == 0 && cpu1_stalled && currentProcess1) {
-            kill(currentProcess1->pid, SIGCONT);
-        }
-        if(overhead2 == 0 && cpu2_stalled && currentProcess2) {
-            kill(currentProcess2->pid, SIGCONT);
-        }
-     
-        if (!cpu1_stalled && currentProcess1 == NULL && q1.size > 0) {
-            currentProcess1 = dequeue(&q1);
-            start_process(scheduler1_log, currentProcess1,currentTime);
-        }
-        if (!cpu2_stalled && currentProcess2 == NULL && q2.size > 0) {
-            currentProcess2 = dequeue(&q2);
-            start_process(scheduler2_log, currentProcess2,currentTime);
-        }
-        pid_t finished_pid;
-        while((finished_pid = waitpid(-1, NULL, WNOHANG)) > 0)
-        {
-            if(currentProcess1 && finished_pid == currentProcess1->pid) {
-                currentProcess1->finishTime = currentTime;
-                currentProcess1->remainingTime = 0;
-                currentProcess1->state = 'F';
-                log_scheduler_event(scheduler1_log, currentTime, currentProcess1, "finished");
-                done_count++;
-                currentProcess1 = NULL;
-            }
-            if(currentProcess2 && finished_pid == currentProcess2->pid) {
-                currentProcess2->finishTime = currentTime;
-                currentProcess2->remainingTime = 0;
-                currentProcess2->state = 'F';
-                log_scheduler_event(scheduler2_log, currentTime, currentProcess2, "finished");
-                done_count++;
-                currentProcess2 = NULL;
-            }
-        }       
-        // steal logic: every N time units, check the difference in queue remaining time and steal if the difference is greater than M
+         // steal logic: every N time units, check the difference in queue remaining time and steal if the difference is greater than M
         if(currentTime % N == 0 && currentTime != 0)
         {
             steal_timer = 0;
@@ -313,9 +277,69 @@ void schedule_FCFS_2CPUs(int msqid,int TotalProcesses, int N, int M)
                     currentProcess2->waitingTime += 3 * steals; // add the overhead to waiting time
                     kill(currentProcess2->pid, SIGSTOP);  // freeze it
                 }
+                continue;
             }
         }
       
+        bool cpu1_stalled = overhead1 > 0;
+        bool cpu2_stalled = overhead2 > 0;
+        if (!cpu1_stalled && currentProcess1 == NULL && q1.size > 0) {
+            currentProcess1 = dequeue(&q1);
+            start_process(scheduler1_log, currentProcess1,currentTime);
+        }
+        if (!cpu2_stalled && currentProcess2 == NULL && q2.size > 0) {
+            currentProcess2 = dequeue(&q2);
+            start_process(scheduler2_log, currentProcess2,currentTime);
+        }
+       
+     
+        if(currentProcess1 && !cpu1_stalled){
+         currentProcess1->remainingTime--;
+         int s1 = semget(PROC_SEM_KEY + currentProcess1->id, 1, 0666);
+            if(s1 == -1) { perror("semget failed"); exit(1); }
+            up(s1); // signal the process to run for one time unit
+        }
+
+        if(currentProcess2 && !cpu2_stalled) {
+            currentProcess2->remainingTime--;
+            int s2 = semget(PROC_SEM_KEY + currentProcess2->id, 1, 0666);
+            if(s2 == -1) { perror("semget failed"); exit(1); }
+            up(s2); // signal the process to run for one time unit
+        }
+        if(overhead1 > 0) overhead1--;
+        if(overhead2 > 0) overhead2--; 
+          if(overhead1 == 0 && cpu1_stalled && currentProcess1) {
+            kill(currentProcess1->pid, SIGCONT);
+        }
+        if(overhead2 == 0 && cpu2_stalled && currentProcess2) {
+            kill(currentProcess2->pid, SIGCONT);
+        } 
+        
+        pid_t finished_pid;
+        while((finished_pid = waitpid(-1, NULL, WNOHANG)) > 0)
+        {
+            if(currentProcess1 && finished_pid == currentProcess1->pid) {
+                int s = semget(PROC_SEM_KEY + currentProcess1->id, 1, 0666);
+                semctl(s, 0, IPC_RMID);   // clean up semaphore
+                currentProcess1->finishTime = currentTime;
+                currentProcess1->remainingTime = 0;
+                currentProcess1->state = 'F';
+                log_scheduler_event(scheduler1_log, currentTime, currentProcess1, "finished");
+                done_count++;
+                currentProcess1 = NULL;
+            }
+            if(currentProcess2 && finished_pid == currentProcess2->pid) {
+                int s = semget(PROC_SEM_KEY + currentProcess2->id, 1, 0666);
+                semctl(s, 0, IPC_RMID);   // clean up semaphore
+                currentProcess2->finishTime = currentTime;
+                currentProcess2->remainingTime = 0;
+                currentProcess2->state = 'F';
+                log_scheduler_event(scheduler2_log, currentTime, currentProcess2, "finished");
+                done_count++;
+                currentProcess2 = NULL;
+            }
+        }       
+       
     }
     FILE * scheduler1_perf = fopen("scheduler1.perf", "w");
     FILE * scheduler2_perf = fopen("scheduler2.perf", "w");
@@ -369,7 +393,7 @@ int main(int argc, char * argv[])
             HPF(msqid, sem_id, TotalProcesses);
             break;
         case ALGO_FCFS_2CPUS: 
-            schedule_FCFS_2CPUs(msqid, TotalProcesses, N, M);
+            schedule_FCFS_2CPUs(msqid,sem_id, TotalProcesses, N, M);
             break;
         default:
             fprintf(stderr, "Unknown algorithm ID: %d\n", algo);

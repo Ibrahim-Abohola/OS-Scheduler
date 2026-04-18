@@ -1,7 +1,7 @@
 #ifndef HEADERS_H
 #define HEADERS_H
 
-#include <stdio.h>      //if you don't use scanf/printf change this include
+#include <stdio.h>      
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -32,6 +32,8 @@ typedef short bool;
 
 ///////////////////
 #define SEMKEY 100
+
+#define PROC_SEM_KEY 400  
 union Semun{
     int val;               
     struct semid_ds *buf;  

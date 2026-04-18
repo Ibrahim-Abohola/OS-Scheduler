@@ -21,7 +21,8 @@ int main(int argc, char *argv[])
     signal(SIGINT, clearResources);
 
     //1
-    FILE *f = fopen("processes.txt", "r");
+    char * filename = argv[1];
+    FILE *f = fopen(filename, "r");
     if (f == NULL) {
         perror("Cannot open processes.txt — run test_generator first!");
         exit(-1);
