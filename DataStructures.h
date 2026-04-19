@@ -32,6 +32,8 @@ typedef struct {
     int steal_checkpoint;   // the simulated time when stealing should happen
     int cpu1_arrived;       // CPU1 has arrived at this checkpoint time
     int cpu2_arrived;       // CPU2 has arrived at this checkpoint time
+    int cpu1_finished;
+    int cpu2_finished;
 } StealShm;
 
 /* ==================== FCFS Queue for one and two CPUs ========================= */

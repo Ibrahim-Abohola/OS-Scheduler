@@ -143,7 +143,7 @@ void calculate_performance(FILE * perfFile,int cpuid) {
     fprintf(perfFile, "Avg Waiting = %.2f\n",        avg_waiting);
     fprintf(perfFile, "Std WTA = %.2f\n",             stddev_WTA);
     fflush(perfFile);
-
+   
 }
 
 
@@ -159,6 +159,12 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
     int  generator_done = 0;
     int next_steal_check = N;    
     bool pending_recheck = false;
+     if(cpu_id == 1) {
+        shm->cpu1_finished = 0;
+        shm->cpu2_finished = 0;
+    }
+    while(cpu_id == 2 && shm->cpu1_finished == -1); 
+
 
     FILE* log_file = fopen(cpu_id == 1 ? "scheduler1.log" : "scheduler2.log", "w");
 
@@ -192,6 +198,7 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
 
          
         if(currentTime == next_steal_check) {
+            bool skip_steal = false;
             bool steal_occurred = false;
             int my_remaining = totalRemainingTime(&readyQueue)
                             + (currentProcess ? currentProcess->remainingTime : 0);
@@ -199,9 +206,20 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
             else            { shm->remaining2 = my_remaining; shm->cpu2_arrived  = 1; }
 
             // Barrier: wait until both CPUs write remaining time
-            while(!(shm->cpu1_arrived && shm->cpu2_arrived));
-
-            // ── CPU1 = coordinator ────────────────────────────────────────────────
+            while(!(shm->cpu1_arrived && shm->cpu2_arrived)){
+                if(cpu_id == 1 && shm->cpu2_finished) {
+                    shm->cpu1_arrived = 0;
+                    skip_steal = true;
+                    break;
+                }
+                if(cpu_id == 2 && shm->cpu1_finished) {
+                    shm->cpu2_arrived = 0;
+                    skip_steal = true;
+                    break;
+                }   
+            }
+            if(!skip_steal){
+                    // ── CPU1 = coordinator ────────────────────────────────────────────────
             if(cpu_id == 1) {
                 int steals = 0;
                 int r1 = shm->remaining1;
@@ -324,6 +342,8 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
             }
             next_steal_check = steal_occurred ? currentTime + 3 : (currentTime / N + 1) * N ;
             if(steal_occurred) continue; 
+            }
+            
         } 
       
         bool is_stalled = overhead > 0;
@@ -347,7 +367,8 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
         
         
     }
-
+     if(cpu_id == 1) shm->cpu1_finished = 1;
+    else            shm->cpu2_finished = 1;
     FILE* perf_file = fopen(cpu_id == 1 ? "scheduler1.perf" : "scheduler2.perf", "w");
     calculate_performance(perf_file, cpu_id);
     fclose(log_file);
@@ -410,6 +431,8 @@ int main(int argc, char * argv[])
             shm->steal_checkpoint = 0;
             shm->cpu1_arrived = 0;
             shm->cpu2_arrived = 0;
+            shm->cpu1_finished = 0;
+            shm->cpu2_finished = 0;
         }
         
         steal_sem_id = semget(STEAL_SEM_KEY, 3, IPC_CREAT | 0666);

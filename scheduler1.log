@@ -1,5 +1,6 @@
-At time 1 process 1 started arr 1 total 10 remain 10 wait 0
+At time 1 process 1 started arr 1 total 9 remain 9 wait 0
 At time 4 process 5 was stolen
-At time 14 process 1 finished arr 1 total 10 remain 0 wait 3 TA 13 WTA 1.30
-At time 15 process 3 started arr 2 total 8 remain 8 wait 13
-At time 23 process 3 finished arr 2 total 8 remain 0 wait 13 TA 21 WTA 2.62
+At time 7 process 3 was stolen
+At time 16 process 1 finished arr 1 total 9 remain 0 wait 6 TA 15 WTA 1.67
+At time 20 process 3 started arr 1 total 4 remain 4 wait 19
+At time 24 process 3 finished arr 1 total 4 remain 0 wait 19 TA 23 WTA 5.75
