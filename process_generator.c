@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
         exit(-1);
     }
   
-    usleep(100000); 
+   
     initClk();            
 
     char algo_s[10], quantum_s[10], N_s[10], M_s[10], total_s[10];

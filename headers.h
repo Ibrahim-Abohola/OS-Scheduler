@@ -28,15 +28,14 @@ typedef short bool;
 #define SHKEY 300
 
 /* ======== Message queue keys (generator <-> schedulers) ============= */         
-#define MSGKEY 200      // legacy, not used in new architecture
+#define MSGKEY 200      
 #define MSGKEY1 65      // queue for scheduler 1
 #define MSGKEY2 66      // queue for scheduler 2
 
 ///////////////////
 #define SEMKEY 100
 
-#define SEMKEY_cpu1 103
-#define SEMKEY_cpu2 104
+#define SEMKEY_clk 103
 
 #define PROC_SEM_KEY 400
 
