@@ -39,6 +39,8 @@ typedef short bool;
 
 #define PROC_SEM_KEY 400
 
+#define QSIZE_SHM_KEY 800
+
 /* ======== Shared memory for work stealing ============= */
 #define STEAL_SHM_KEY 500
 #define STEAL_SEM_KEY 101

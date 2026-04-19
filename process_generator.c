@@ -112,7 +112,6 @@ int main(int argc, char *argv[])
             execl("./scheduler.out","scheduler.out","1",algo_s,total_s,N_s,M_s,NULL);
         perror("execl sch1"); exit(1);
     }
-
     if(algo == ALGO_FCFS_2CPUS) {
         sch2_pid = fork();
         if(sch2_pid == -1) { perror("fork scheduler2"); exit(-1); }
@@ -124,13 +123,25 @@ int main(int argc, char *argv[])
    
     int sent = 0;
     int prev_clk = -1;
-    int q1_count = 0, q2_count = 0;
     bool end_sent = false;
     bool s1_done = false, s2_done = false;
+    QSizeShm* qsize_shm = NULL;
+    if(algo == ALGO_FCFS_2CPUS) {
+        int shmid = -1;
+        while(shmid == -1) {
+            shmid = shmget(QSIZE_SHM_KEY, sizeof(QSizeShm), 0666);
+            if(shmid == -1) usleep(10000);  
+        }
+        qsize_shm = (QSizeShm*)shmat(shmid, 0, 0);
+        if((long)qsize_shm == -1) { perror("qsize shmat gen failed"); exit(-1); }
+    }
     while(true) {
         int now = getClk();
         if(now == prev_clk)  continue; 
         prev_clk = now;
+
+        int q1_size = (algo == ALGO_FCFS_2CPUS) ? qsize_shm->q1_size : 0;
+        int q2_size = (algo == ALGO_FCFS_2CPUS) ? qsize_shm->q2_size : 0;
 
         for(int i = 0; i < process_count; i++) {
             if(processes[i].arrivaltime != now) continue;
@@ -143,14 +154,14 @@ int main(int argc, char *argv[])
             message.priority = processes[i].priority;
 
             if(algo == ALGO_FCFS_2CPUS) {
-                if(q1_count <= q2_count) {
+                if(q1_size <= q2_size) {
                     msgsnd(msgqid1, &message, sizeof(ProcessMsg)-sizeof(long), 0);
                     printf("Sent process %d at time %d to CPU1\n", processes[i].id, now);
-                    q1_count++;
+                    q1_size++;
                 } else {
                     msgsnd(msgqid2, &message, sizeof(ProcessMsg)-sizeof(long), 0);
                     printf("Sent process %d at time %d to CPU2\n", processes[i].id, now);
-                    q2_count++;
+                    q2_size++;
                 }
             } else {
                 msgsnd(msgqid1, &message, sizeof(ProcessMsg)-sizeof(long), 0);
@@ -207,6 +218,10 @@ void clearResources(int signum)
     if (msgqid2 != -1) {
         msgctl(msgqid2, IPC_RMID, NULL); 
         printf("Message queue 2 removed.\n");
+    }
+    int qsize_shmid = shmget(QSIZE_SHM_KEY, sizeof(QSizeShm), 0666);
+    if(qsize_shmid != -1) {
+        shmctl(qsize_shmid, IPC_RMID, NULL);
     }
     
     destroyClk(true);

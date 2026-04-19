@@ -126,7 +126,7 @@ void calculate_performance(FILE * perfFile,int cpuid) {
     if(n == 0) return;
     double avg_WTA = total_WTA / n;
     double avg_waiting = total_waiting / n;
-    double cpu_utilization = (double)total_runtime / (last_finish - first_start) * 100;
+    double cpu_utilization = (double)total_runtime / last_finish  * 100;
     /* standard deviation of WTA */
     double sum_squared_diff = 0;
     for(int i =0; i < pcbTableSize; i++) {
@@ -148,7 +148,7 @@ void calculate_performance(FILE * perfFile,int cpuid) {
 
 
 void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
-    StealShm* shm, int steal_sem_id, int TotalProcesses, int N, int M)
+    StealShm* shm, int steal_sem_id, QSizeShm* qsize_shm, int TotalProcesses, int N, int M)
 {
     Queue readyQueue;
     initQueue(&readyQueue);
@@ -218,6 +218,7 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
                     break;
                 }   
             }
+           
             if(!skip_steal){
                     // ── CPU1 = coordinator ────────────────────────────────────────────────
             if(cpu_id == 1) {
@@ -364,7 +365,8 @@ void schedule_FCFS_single_with_stealing(int cpu_id, int msqid, int semid,
             up(ps);
             
         }
-        
+        if(cpu_id == 1) qsize_shm->q1_size = readyQueue.size;
+        else            qsize_shm->q2_size = readyQueue.size;
         
     }
      if(cpu_id == 1) shm->cpu1_finished = 1;
@@ -415,6 +417,7 @@ int main(int argc, char * argv[])
     
     int steal_sem_id = -1;
     StealShm* shm = NULL;
+    QSizeShm* qsize_shm = NULL;
     if(algo == ALGO_FCFS_2CPUS) {
         int shmid = shmget(STEAL_SHM_KEY, sizeof(StealShm), IPC_CREAT | 0666);
         if(shmid == -1) { perror("shmget failed"); exit(1); }
@@ -434,6 +437,7 @@ int main(int argc, char * argv[])
             shm->cpu1_finished = 0;
             shm->cpu2_finished = 0;
         }
+
         
         steal_sem_id = semget(STEAL_SEM_KEY, 3, IPC_CREAT | 0666);
         if(steal_sem_id == -1) { perror("semget steal failed"); exit(1); }
@@ -444,6 +448,16 @@ int main(int argc, char * argv[])
             semctl(steal_sem_id, SEM_BARRIER, SETVAL, sem_un);
             semctl(steal_sem_id, SEM_REQUEST, SETVAL, sem_un);
             semctl(steal_sem_id, SEM_DONE, SETVAL, sem_un);
+        }
+        //shared memory for queue sizes
+        int qsize_shmid = shmget(QSIZE_SHM_KEY, sizeof(QSizeShm), IPC_CREAT | 0666);
+        if(qsize_shmid == -1) { perror("qsize shmget failed"); exit(1); }
+        qsize_shm = (QSizeShm*)shmat(qsize_shmid, 0, 0);
+        if((long)qsize_shm == -1) { perror("qsize shmat failed"); exit(1); }
+
+        if(cpu_id == 1) {
+            qsize_shm->q1_size = 0;
+            qsize_shm->q2_size = 0;
         }
     
     }
@@ -456,7 +470,7 @@ int main(int argc, char * argv[])
             HPF(msqid, sem_id, TotalProcesses);
             break;
         case ALGO_FCFS_2CPUS: 
-            schedule_FCFS_single_with_stealing(cpu_id, msqid, sem_id, shm, steal_sem_id, TotalProcesses, N, M);
+            schedule_FCFS_single_with_stealing(cpu_id, msqid, sem_id, shm, steal_sem_id, qsize_shm, TotalProcesses, N, M);
             break;
         default:
             fprintf(stderr, "Unknown algorithm ID: %d\n", algo);
@@ -474,6 +488,11 @@ int main(int argc, char * argv[])
         if(steal_sem_id_cleanup != -1) {
             semctl(steal_sem_id_cleanup, 0, IPC_RMID);
             printf("Steal semaphores removed by CPU1.\n");
+        }
+        int qsize_shmid = shmget(QSIZE_SHM_KEY, 0, 0666);
+        if(qsize_shmid != -1) {
+        shmctl(qsize_shmid, IPC_RMID, NULL);
+        shmdt(qsize_shm);
         }
     }
     

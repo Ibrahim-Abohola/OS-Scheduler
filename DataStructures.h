@@ -36,6 +36,10 @@ typedef struct {
     int cpu2_finished;
 } StealShm;
 
+typedef struct {
+    int q1_size;
+    int q2_size;
+} QSizeShm;
 /* ==================== FCFS Queue for one and two CPUs ========================= */
 typedef struct QNode
 {
