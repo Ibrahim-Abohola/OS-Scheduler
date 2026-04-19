@@ -51,7 +51,7 @@ void HPF (int msg_id,int sem_id,int total_processes) {
         }
         
         ProcessMsg message;
-        while(msgrcv(msg_id,&message,sizeof(message),0,IPC_NOWAIT)!=-1){
+        while(msgrcv(msg_id, &message, sizeof(message) - sizeof(long), PROCESS_MSG_TYPE, IPC_NOWAIT)!=-1){
             PCB new_process;
             new_process.remainingTime=message.runtime;
             new_process.arrivalTime=message.arrival;
