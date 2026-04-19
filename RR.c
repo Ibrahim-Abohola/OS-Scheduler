@@ -64,7 +64,8 @@ void RR(int msg_id, int sem_id, int total_processes, int quantum) {
         }
 
         ProcessMsg message;
-        while (msgrcv(msg_id, &message, sizeof(message), 0, IPC_NOWAIT) != -1) {
+
+        while(msgrcv(msg_id, &message, sizeof(message) - sizeof(long), PROCESS_MSG_TYPE, IPC_NOWAIT)!=-1){
             PCB new_process;
             new_process.id = message.id;
             new_process.arrivalTime = message.arrival;
